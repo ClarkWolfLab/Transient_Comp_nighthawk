@@ -1,0 +1,49 @@
+---
+title: "Hastings et al. (2018) Science"
+author: "T.J. Clark"
+date: "`r Sys.Date()`"
+output: pdf_document
+---
+Trying to recreate the figures
+
+```{r message = F}
+library(tidyverse)
+library(deSolve)
+library(nimble)
+```
+
+## Figure 1-D - Competition Model showing Ghost Attractor
+
+$$\frac{du}{dt} = u(1-u) - a_{12}u^nv $$
+$$\frac{dv}{dt} = \gamma[v(1-v)-a_{21}u^nv] $$
+
+
+```{r}
+comp <- function(Time, State, Pars){
+  with(as.list(c(State, Pars)), {
+    du <- u*(1-u) - a12*u^n*v
+    dv <- gamma*(v*(1-v) - a21*u^n*v)
+    return(list(c(du,dv)))
+  })
+}
+
+# params
+p <- c(a12 = 0.9, a21 = 1.1, gamma = 10, n=3) # Fig. 1A and C
+p2 <- list(a12 = 0.9, a21 = 1.1, gamma = 10, n=1.8) # Fig. 1B and D
+y <- c(u = .001, v = 1)
+t <- seq(0,135,by=1)
+
+out1 <- as_tibble(ode(y, t, comp, p)[,-1])
+out2 <- as_tibble(ode(y, t, comp, p2)[,-1])
+
+out1 %>% 
+  ggplot(aes(t, v)) +
+  geom_line(lwd=1) +
+  ylim(c(0,1))
+
+out2 %>% 
+  ggplot(aes(t, v)) +
+  geom_line(lwd=1) +
+  ylim(c(0,1))
+```
+

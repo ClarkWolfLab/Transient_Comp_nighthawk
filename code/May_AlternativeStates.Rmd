@@ -1,5 +1,5 @@
 ---
-title: "Transient Models"
+title: "May - Alternative Stable States"
 author: "T.J. Clark"
 date: "`r Sys.Date()`"
 output: pdf_document
@@ -10,7 +10,7 @@ library(tidyverse)
 library(nimble)
 ```
 
-## 1. May (1977)'s alternative stable state model
+## May (1977)'s alternative stable state model
 See NIMBIOS transients code...
 Also see Boettiger (2018) Ecology Letters - can also be a "stochastic oscillator"
 
