@@ -1,0 +1,91 @@
+---
+title: "Abbott & Nolting (2016) Ecological Complexity"
+author: "T.J. Clark"
+date: "`r Sys.Date()`"
+output: pdf_document
+---
+Trying to recreate the figures
+
+```{r message = F}
+library(tidyverse)
+library(deSolve)
+library(QPot)
+```
+
+## Derived from Rosenzweig & MacArthur model
+From Shoemaker et al. (2020) Ecology. Shows sustained transient cycles that keep bumping the trajectory away from the stable state.
+
+$$\ \frac{dN}{dt}=rN(1-\frac{N}{K}) - \frac{mNP}{1+mhN} + N\zeta_n\sigma_{t,n} $$
+$$\ \frac{dP}{dt}=\frac{cmNP}{1+mhN} - dP + P\zeta_p\sigma_{t,p} $$
+
+```{r, message = F}
+#### non-stochastic code
+predprey <- function(Time, State, Pars){
+  with(as.list(c(State, Pars)), {
+    dN <- r*N*(1-N/K) - m*N*P/(1+m*h*N)
+    dP <- c*m*N*P/(1+m*h*N) - d*P
+    return(list(c(dN,dP)))
+  })
+}
+
+# params
+p <- c(r = 0.2, K = 82, m = 0.02, h = 1, c = 1, d = 0.4) 
+y <- c(N = 30, P = 10)
+t <- seq(0,1000,by=1)
+
+out <- as_tibble(ode(y, t, predprey, p)[,-1])
+
+#### stochastic code
+
+var.eqn.x <- "r*N*(1-N/K) - m*N*P/(1+m*h*N)"
+var.eqn.y <- "c*m*N*P/(1+m*h*N) - d*P"
+model.parms <- c(r = 0.2, K = 82, m = 0.02, h = 1, c = 1, d = 0.4)
+parms.eqn.x <- Model2String(var.eqn.x, parms = model.parms, supress.print = T)
+parms.eqn.y <- Model2String(var.eqn.y, parms = model.parms, supress.print = T)
+model.state <- c(N = 30, P = 10)
+model.sigma <- 0.25
+model.time <- 1001
+model.deltat <- 1 # frequency of stochastic perturbation
+
+out2 <- as_tibble(TSTraj(y0 = model.state, time = model.time, deltat = model.deltat,
+               x.rhs = parms.eqn.x, y.rhs = parms.eqn.y, sigma = model.sigma))
+
+```
+
+```{r}
+# time-series
+out %>%
+  ggplot(aes(t)) +
+  geom_line(aes(y = N), color = "black", lwd = 1.1) +
+  geom_line(aes(y = P), color = "grey40", lwd = 1.1) +
+  geom_line(aes(y = out2$N), lwd = 1.1, color = "red") +
+  geom_line(aes(y = out2$P), lwd = 1.1, color = "blue")+
+  ylim(c(0,55)) +
+  ggtitle("")
+
+# state-space
+out %>%
+  ggplot(aes(N,P)) +
+  geom_path(aes(x = out2$N, y = out2$P), lwd = 1.1, color = "red") +
+  geom_path(lwd=1.1, color = "black") +
+  xlim(c(0,55))+
+  ylim(c(0,20))
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
