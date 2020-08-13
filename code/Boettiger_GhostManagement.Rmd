@@ -1,0 +1,169 @@
+---
+title: "Boettiger (2020) Theoretical Ecology"
+author: "T.J. Clark"
+date: "`r Sys.Date()`"
+output: pdf_document
+---
+
+```{r message = F}
+library(tidyverse)
+library(mdplearning) # Markov Decision Process
+library(MDPtoolbox)
+```
+
+## Reconstructing Boettiger's (2020) Theoretical Ecology paper
+Idea is to optimately manage under different understanding of stable states...
+
+```{r}
+# discrete version of the state space (beetle) and the action space (culling)
+n_s <- 121
+states <- seq(0,120, length=n_s)
+actions <- seq(0,120,length=n_s)
+```
+
+```{r}
+# Model constants - also used to compute transition probabilities
+efficiency <- 0.4
+p <- list(r= 0.8, K = 153, q = 2, b = 20, sigma = 0.05, x0 = 20) # fixed parameters
+
+may <- function(a){
+  function(x, h=0){
+    y <- x - efficiency*h
+    pmax(
+      y + y * p$r * (1 - y / p$K) - a * y ^ p$q / (y ^ p$q + p$b ^ p$q),
+      0) # dont allow below 0
+  }
+}
+```
+
+```{r}
+# Graph different models - allows manipulation by "a"
+c("ghost attractor" = 27.2,
+  "bistable attractor" = 28) %>%
+  map_dfr(function(a) tibble(x = states, f = may(a)(x,0) - x, a = a), .id = "scenario") %>%
+  ggplot(aes(x, f)) +
+  geom_line(aes(lty = scenario, col = scenario), lwd = 1)+
+  geom_hline(aes(yintercept = 0))
+```
+
+```{r}
+# transition matrix
+# expresses probability that state Xt will transition to state Xt+1 with action At
+transition_matrix <- function(states, actions, f, sigma){
+  n_s <- length(states)
+  n_a <- length(actions)
+  transition <- array(0, dim = c(n_s, n_s, n_a))# grid of state space vals between 0 and 121, and 121 actions
+  for (i in 1:n_a){
+    for (k in 1:n_s){
+      nextpop <- f(states[k], actions[i])
+      if (nextpop <= 0){
+        x <- c(1, rep(0, n_s - 1))
+      } else {
+        x <- truncnorm::dtruncnorm(states, 0, max(states), nextpop, sigma*nextpop) # generates new x...
+        if(sum(x) <= 0){
+          x <- c(1, rep(0, n_s - 1))
+        } else {
+          x <- x/sum(x) # larger values are more likely!
+        }
+      }
+      transition[k,,i] <- x
+    }
+  }
+  if(any(is.na(transition))) stop("error creating transition matrix")
+  transition
+}
+```
+
+```{r}
+# generate transition matrices
+P_ghost <- transition_matrix(states, actions, may(27.2), p$sigma)
+P_bistable <- transition_matrix(states, actions, may(28), p$sigma)
+```
+
+```{r}
+# sample from transition matrix based off of matrix probabilities
+sim <- function(transition, x0, Tmax, action = rep(1, Tmax)){
+  n_states <- dim(transition)[2]
+  state <- numeric(Tmax + 1)
+  state[1] <- x0
+  time <- 1:Tmax
+  for (t in time){
+    state[t + 1] <- base::sample(1:n_states,
+                                 1,
+                                 prob = transition[state[t], , action[t]])
+  }
+  data.frame(time = 1:Tmax, state = state[time])
+}
+```
+
+```{r}
+# try out simulate function via Stochastic dynamic Programming
+x0 <- which.min(abs(states - p$x0)) # start point for utility function?
+Tmax <- 200 # time of simulation
+set.seed(12345)
+reps <- 50
+ghost_sim <- map_dfr(1:reps, function(i)
+  sim(P_ghost, x0, Tmax) %>% mutate(state = states[state], scenario = "ghost"),
+  .id = "rep")
+bistable_sim <- map_dfr(1:reps, function(i)
+  sim(P_bistable, x0, Tmax) %>% mutate(state = states[state], scenario = "bistable"),
+  .id = "rep")
+fig1_sims <- bind_rows(ghost_sim,bistable_sim)
+
+```
+
+```{r}
+# show 50 reps for each of the simulations
+fig1_sims %>%
+  ggplot(aes(time, state, group = interaction(rep, scenario), col = scenario)) +
+  geom_line(alpha = 0.3) + facet_wrap(~scenario, ncol=1)
+```
+
+```{r}
+# utility functions
+
+damage <- 0.5
+control <- 1
+endemic <- 50
+discount <- 0.999 # dynamics on scale of days
+reward_fn <- function(x,h) -(damage * pmax(x-endemic, 0))^2 - (control*h)
+
+# apply reward function across states and actions
+reward <- array(dim=c(length(states), length(actions)))
+for(i in 1:length(states)){
+  for(j in 1: length(actions)){
+    reward[i,j] <- reward_fn(states[i], actions[j])
+  }
+}
+```
+
+```{r}
+# Optimal Planning under Dynamics...what would the manager do?
+# Uses Stochastic Dynamic Programming - see Marescot et al. (2013) sometime...
+soln_ghost <- mdp_compute_policy(list(P_ghost), reward, discount, max_iter = 1e4, epsilon = 1e-2)
+soln_bistable <- mdp_compute_policy(list(P_bistable), reward, discount, max_iter = 1e4, epsilon = 1e-4)
+
+policy_plot <- 
+  tibble(state = states,
+         ghost = actions[soln_ghost$policy], # optimal ghost policy
+         bistable = actions[soln_bistable$policy]) %>% # optimal bistable policy
+  pivot_longer(c(ghost,bistable),
+               names_to="model",
+               values_to="action")
+```
+
+```{r}
+# graph optimal policy
+# NOTE: with more noise the management policies converge (since bistable can jump from 1 state to another)
+policy_plot %>%
+  ggplot(aes(state, action, color = model)) +
+  geom_point(alpha=0.6)
+```
+
+
+
+
+
+
+
+
