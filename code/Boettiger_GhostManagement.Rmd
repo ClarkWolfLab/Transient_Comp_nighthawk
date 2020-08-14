@@ -136,9 +136,9 @@ for(i in 1:length(states)){
   }
 }
 ```
-
+Optimal Planning under Dynamics...what would the manager do?
 ```{r}
-# Optimal Planning under Dynamics...what would the manager do?
+
 # Uses Stochastic Dynamic Programming - see Marescot et al. (2013) sometime...
 soln_ghost <- mdp_compute_policy(list(P_ghost), reward, discount, max_iter = 1e4, epsilon = 1e-2)
 soln_bistable <- mdp_compute_policy(list(P_bistable), reward, discount, max_iter = 1e4, epsilon = 1e-4)
@@ -159,6 +159,177 @@ policy_plot %>%
   ggplot(aes(state, action, color = model)) +
   geom_point(alpha=0.6)
 ```
+
+What happens if the you have ghost dynamics under each management policy?
+```{r}
+# run simulations under different management scenarios
+reps <- 20
+Tmax <- 200
+set.seed(12345)
+# ghost policy with ghost dynamics
+sim_ghost <- map_dfr(1:reps, function(i)
+                   mdp_planning(P_ghost, reward, discount, 
+                   policy = soln_ghost$policy,
+                   x0 = x0, Tmax = Tmax), .id = "reps")
+# bistable policy with ghost dynamics
+sim_bistable <- map_dfr(1:reps, function(i)
+                   mdp_planning(P_ghost, reward, discount, 
+                   policy = soln_bistable$policy,
+                   x0 = x0, Tmax = Tmax), .id = "reps")
+fixed_sims <- 
+ bind_rows("sims under ghost policy" = sim_ghost, 
+           "sims under bistable policy" = sim_bistable, 
+           .id = "prior") %>% 
+  mutate(state = states[state], 
+         action = actions[action]) 
+```
+
+```{r}
+# graph
+fixed_sims %>% select(state, action, time, prior, reps) %>%
+  pivot_longer(c(-time, -prior, -reps), names_to = "line", values_to  = "state") %>%
+  filter(time < 100) %>%
+  ggplot(aes(time, state, group = interaction(line, reps), col=line)) + 
+  geom_line(alpha=0.5) + 
+  facet_wrap(~prior, ncol=1) + ylab("state or action")+
+  ggtitle("get stuck in a management cycle with ghost dynamics under bistable policy")
+  
+```
+
+Average costs due to mistakes in policy with ghost dynamics
+```{r}
+costs <- fixed_sims %>% group_by(time, prior) %>%
+  summarize(cost = mean(value)) %>% # summarize across value gained
+  group_by(prior) %>%
+  mutate(cost = abs(cumsum(cost * .999 ^ time))) %>% # .99 is discounting by 81.86% of starting val at t=200
+  rename(model = prior)
+
+# graph
+costs %>%
+  ggplot(aes(time, cost, ymin = 0, ymax = cost, fill = model)) +
+  geom_ribbon(alpha = 0.5) +
+  ylab("Cost (net present value)") +
+  xlab("time")+
+  theme(legend.position = "bottom") +
+  ggtitle("mistaking ghost for bistable is costly over time")
+```
+
+Planning for uncertainty - what if we don't know which model is correct?
+```{r}
+# calculate with different prior beliefs of models
+fifty_fifty <- mdp_compute_policy(list(P_ghost, P_bistable), reward, discount,
+                                  model_prior = c(0.5, 0.5),
+                                  max_iter = 1e4, epsilon = 1e-2)
+seventy_thirty <- mdp_compute_policy(list(P_ghost, P_bistable), reward, discount,
+                                  model_prior = c(0.7, 0.3),
+                                  max_iter = 1e4, epsilon = 1e-2)
+
+# graph optimal policies for 50/50
+tibble(state = states,
+       action = actions[fifty_fifty$policy]) %>%
+  ggplot(aes(state, action)) + geom_point() +
+  geom_vline(aes(xintercept = states[x0])) 
+
+# graph optimal policies for 70/30 ghost/bistable
+# basically, more likely that it's a ghost, more likely you'll be aggressive from the get go!
+tibble(state = states,
+       action = actions[seventy_thirty$policy]) %>%
+  ggplot(aes(state, action)) + geom_point() +
+  geom_vline(aes(xintercept = states[x0])) 
+  
+```
+
+```{r}
+# run simulations showing manager's uncertainty in the true model, with real dynamics being a ghost
+sim_fiftyfifty <- map_dfr(1:reps, function(i)
+  mdp_planning(P_ghost, reward, discount,
+               policy = fifty_fifty$policy,
+               x0 = x0, Tmax = Tmax), .id = "reps")
+sim_seventythirty <- map_dfr(1:reps, function(i)
+  mdp_planning(P_ghost, reward, discount,
+               policy = seventy_thirty$policy,
+               x0 = x0, Tmax = Tmax), .id = "reps")
+
+sims_by_prior <- 
+  bind_rows("50-50 model prior" = sim_fiftyfifty,
+            "70-30 model prior" = sim_seventythirty,
+            .id = "prior") %>%
+  mutate(state = states[state],
+         action = actions[action])
+
+# graph
+# 50-50 prior = some resemble large actions to eliminate pest, but ususally just look like bistability policy
+# 70-30 prior = super large action right away, eliminates pest altogether
+sims_by_prior %>% select(state, action, time, prior, reps) %>%
+  pivot_longer(c(-time, -prior, - reps), names_to = "line", values_to = "state") %>%
+  filter(time < 100) %>%
+  ggplot(aes(time, state, group = interaction(line, reps), col = line)) +
+  geom_line(alpha = 0.5) +
+  facet_wrap(~prior, ncol=1)+
+  ylab("state or action")
+
+```
+
+What if the manager can learn using Adaptive Management? Because each time step gives the manager more information about which dynamics are occurring...
+```{r}
+
+# adaptive management, 50/50 prior belief, actual ghost dynamics
+set.seed(12345)
+Tmax <- 50
+learning <- mdp_learning(list(P_ghost, P_bistable), reward, discount,
+                         model_prior = c(0.5, 0.5),
+                         x0=x0, Tmax=Tmax,
+                         true_transition = P_ghost,
+                         max_iter = 1e4, epsilon = 1e-2)
+
+# graph
+# short period of low pest management, followed by a large action
+learning$df %>%
+  select(-value, -obs) %>%
+  gather(series, state, -time) %>%
+  ggplot(aes(time, states[state], color = series)) +
+  geom_line()+
+  ylab("state or action")
+```
+
+Learning through Adaptive Management...
+When do we know the dynamics of the system? Posterior shows belief state of the system
+```{r}
+
+# increasing prob of ghost being correct, decreasing prob of bistable being incorrect
+model_names = c("Ghost", "Bistable")
+learning$posterior %>%
+  data.frame(time = 1:Tmax) %>%
+  filter(time < 12) %>% # learns very quickly
+  gather(model, probability, -time, factor_key = T) %>%
+  mutate(model = model_names[as.integer(model)]) %>%
+  ggplot(aes(x=time, y=probability, col = model)) +
+  geom_point() +
+  geom_line() +
+  ylim(c(0,1))
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
