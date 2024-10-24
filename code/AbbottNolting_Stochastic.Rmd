@@ -5,6 +5,7 @@ date: "`r Sys.Date()`"
 output: pdf_document
 ---
 Trying to recreate the figures
+WE ARE LEARNING SO MUCH BLAH BLAH BLAH 
 
 ```{r message = F}
 library(tidyverse)
